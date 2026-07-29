@@ -1,163 +1,154 @@
+// src/pages/TeacherDashboard.tsx
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { Plus, Users, Clock, BarChart3, History, Share2, Image, Type, Trash2 } from 'lucide-react';
-import { createQuizInDB } from '../lib/quizStorage';
+import {
+  Plus, Users, Clock, BarChart3, History, Share2, Image, Type, Trash2, Eye, X
+} from 'lucide-react';
+import {
+  getTeacherQuizzesWithAttempts,
+  createQuizInDB,
+  updateQuizShowDetails,
+  getStudentAttemptWithQuizDetails,
+  DatabaseQuiz
+} from '../lib/quizStorage';
+import { supabase } from '../integrations/supabase/client';
 
-interface Quiz {
+// Tipe data untuk frontend
+interface FormattedQuiz {
   id: string;
   title: string;
   description: string;
-  questions: Question[];
-  createdAt: Date;
-  timeLimit?: number;
-  shareLink: string;
-  attempts: QuizAttempt[];
-  isActive: boolean;
-  teacher_id?: string;
-  is_public?: boolean;
+  time_limit: number;
+  is_public: boolean;
+  show_detailed_results: boolean; // added
+  created_at: string;
+  attempts: {
+    id: string;
+    studentName: string;
+    studentEmail: string;
+    score: number;
+    totalQuestions: number;
+    completedAt: Date;
+    timeTaken: number;
+    answers: any[];
+  }[];
 }
 
-interface Question {
-  id: number;
-  question: string;
-  options: string[];
-  correct: number;
-  type: 'text' | 'image';
-  imageUrl?: string;
-}
-
-interface QuizAttempt {
-  id: string;
-  studentName: string;
-  studentId: string;
-  score: number;
-  totalQuestions: number;
-  completedAt: Date;
-  answers: number[];
-}
-
+// Komponen utama
 const TeacherDashboard = () => {
   const { user } = useAuth();
-  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
-  const [showCreateQuiz, setShowCreateQuiz] = useState(false);
+  const [quizzes, setQuizzes] = useState<FormattedQuiz[]>([]);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
   const [createdQuizLink, setCreatedQuizLink] = useState<string>('');
+  const [showCreateQuiz, setShowCreateQuiz] = useState(false);
 
+  // Ambil data dari Supabase
   useEffect(() => {
-    if (user) {
-      // Load quizzes with better error handling
+    if (!user) return;
+
+    const fetchQuizzes = async () => {
+      setLoading(true);
       try {
-        const savedQuizzes = JSON.parse(localStorage.getItem(`teacher_quizzes_${user.id}`) || '[]');
-        setQuizzes(savedQuizzes);
+        const data = await getTeacherQuizzesWithAttempts(user.id);
+        setQuizzes(data);
       } catch (error) {
-        console.error('Error loading teacher quizzes:', error);
+        console.error('Error fetching quizzes:', error);
         setQuizzes([]);
+      } finally {
+        setLoading(false);
       }
-    }
+    };
+
+    fetchQuizzes();
   }, [user, activeTab]);
 
+  // Validasi role
   if (!user || user.role !== 'teacher') {
     return <Navigate to="/auth" replace />;
   }
 
-  const saveQuizzes = (newQuizzes: Quiz[]) => {
-    setQuizzes(newQuizzes);
+  // Fungsi membuat quiz (panggil createQuizInDB)
+  const handleCreateQuiz = async (quizData: any) => {
     try {
-      localStorage.setItem(`teacher_quizzes_${user.id}`, JSON.stringify(newQuizzes));
+      const quizId = await createQuizInDB(
+        {
+          title: quizData.title,
+          description: quizData.description,
+          timeLimit: quizData.timeLimit || 15,
+          questions: quizData.questions,
+          isActive: true,
+        },
+        user.id
+      );
+
+      if (quizId) {
+        // Refresh daftar quiz
+        const updatedQuizzes = await getTeacherQuizzesWithAttempts(user.id);
+        setQuizzes(updatedQuizzes);
+        setActiveTab('overview');
+        const shareLink = `${window.location.origin}/quiz/shared/${quizId}`;
+        setCreatedQuizLink(shareLink);
+        alert(`Quiz created successfully!\nShare link: ${shareLink}`);
+      } else {
+        alert('Failed to create quiz. Check console for errors.');
+      }
     } catch (error) {
-      console.error('Error saving teacher quizzes:', error);
-    }
-  };
-
-  const handleCreateQuiz = async (quizData: Omit<Quiz, 'id' | 'createdAt' | 'shareLink' | 'attempts'>) => {
-    try {
-      if (!user?.id) {
-        throw new Error('User not authenticated');
-      }
-
-      if (quizData.questions.length === 0) {
-        throw new Error('Please add at least one question to the quiz');
-      }
-
-      // Prepare questions for database
-      const questionsForDb = quizData.questions.map((q, index) => ({
-        id: index + 1, // Generate sequential IDs
-        question: q.question,
-        options: q.options,
-        correct: q.correct,
-        type: q.type,
-        imageUrl: q.imageUrl,
-        // Add any other required fields here
-      }));
-
-      // First save to database
-      const quizId = await createQuizInDB({
-        title: quizData.title,
-        description: quizData.description,
-        timeLimit: quizData.timeLimit || 15, // Default to 15 minutes if not specified
-        questions: questionsForDb,
-        isActive: true
-      }, user.id);
-
-      if (!quizId) {
-        throw new Error('Failed to create quiz in database');
-      }
-
-      // Then save to local state
-      const newQuiz: Quiz = {
-        ...quizData,
-        id: quizId,
-        teacher_id: user.id,
-        is_public: true,
-        createdAt: new Date(),
-        shareLink: `${window.location.origin}/quiz/shared/${quizId}`,
-        attempts: []
-      };
-      
-      const updatedQuizzes = [...quizzes, newQuiz];
-      saveQuizzes(updatedQuizzes);
-      setActiveTab('overview');
-      setCreatedQuizLink(newQuiz.shareLink);
-      
-      // Show success message with the share link
-      alert(`Quiz created successfully!\n\nShare this link with your students:\n${newQuiz.shareLink}`);
-      
-    } catch (error: any) {
       console.error('Error creating quiz:', error);
-      alert(`Failed to create quiz: ${error.message || 'Unknown error'}`);
+      alert('An error occurred while creating the quiz.');
     }
   };
 
-  const toggleQuizStatus = (quizId: string) => {
-    const updatedQuizzes = quizzes.map(quiz =>
-      quiz.id === quizId ? { ...quiz, isActive: !quiz.isActive } : quiz
-    );
-    saveQuizzes(updatedQuizzes);
-  };
-
-  const deleteQuiz = (quizId: string) => {
-    if (confirm('Are you sure you want to delete this quiz? This action cannot be undone.')) {
-      const updatedQuizzes = quizzes.filter(quiz => quiz.id !== quizId);
-      saveQuizzes(updatedQuizzes);
+  // Toggle status aktif/nonaktif (update di DB)
+  const toggleQuizStatus = async (quizId: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('quizzes')
+        .update({ is_public: !currentStatus })
+        .eq('id', quizId);
+      if (error) throw error;
+      // Refresh data
+      const updatedQuizzes = await getTeacherQuizzesWithAttempts(user.id);
+      setQuizzes(updatedQuizzes);
+    } catch (error) {
+      console.error('Error toggling quiz status:', error);
+      alert('Failed to update quiz status.');
     }
   };
 
-  const getQuizStats = () => {
-    const totalQuizzes = quizzes.length;
-    const totalAttempts = quizzes.reduce((acc, quiz) => acc + quiz.attempts.length, 0);
-    const activeQuizzes = quizzes.filter(quiz => quiz.isActive).length;
-    const avgScore = totalAttempts > 0 
-      ? quizzes.reduce((acc, quiz) => 
-          acc + quiz.attempts.reduce((sum, attempt) => sum + (attempt.score / attempt.totalQuestions), 0), 0
-        ) / totalAttempts * 100
-      : 0;
-
-    return { totalQuizzes, totalAttempts, activeQuizzes, avgScore };
+  // Hapus quiz (dengan konfirmasi)
+  const deleteQuiz = async (quizId: string) => {
+    if (!confirm('Are you sure you want to delete this quiz? This action cannot be undone.')) return;
+    try {
+      const { error } = await supabase
+        .from('quizzes')
+        .delete()
+        .eq('id', quizId);
+      if (error) throw error;
+      // Refresh
+      const updatedQuizzes = await getTeacherQuizzesWithAttempts(user.id);
+      setQuizzes(updatedQuizzes);
+    } catch (error) {
+      console.error('Error deleting quiz:', error);
+      alert('Failed to delete quiz.');
+    }
   };
 
-  const stats = getQuizStats();
+  // Statistik
+  const stats = {
+    totalQuizzes: quizzes.length,
+    totalAttempts: quizzes.reduce((acc, q) => acc + q.attempts.length, 0),
+    activeQuizzes: quizzes.filter(q => q.is_public).length,
+    avgScore: quizzes.length > 0
+      ? quizzes.reduce((acc, q) => {
+          const total = q.attempts.reduce((sum, a) => sum + (a.score / a.totalQuestions || 0), 0);
+          return acc + total;
+        }, 0) / quizzes.reduce((acc, q) => acc + q.attempts.length, 0) * 100
+      : 0,
+  };
 
+  // Render
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50">
       <div className="flex">
@@ -199,108 +190,37 @@ const TeacherDashboard = () => {
 
         {/* Main Content */}
         <div className="flex-1 p-8">
-          {activeTab === 'overview' && (
-            <div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-8">Dashboard Overview</h2>
-              
-              {/* Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                {[
-                  { label: 'Total Quizzes', value: stats.totalQuizzes, icon: BarChart3, color: 'purple' },
-                  { label: 'Active Quizzes', value: stats.activeQuizzes, icon: Clock, color: 'green' },
-                  { label: 'Total Attempts', value: stats.totalAttempts, icon: Users, color: 'blue' },
-                  { label: 'Avg Score', value: `${stats.avgScore.toFixed(1)}%`, icon: BarChart3, color: 'orange' },
-                ].map((stat, index) => (
-                  <div key={index} className="sidebar-card p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">{stat.label}</p>
-                        <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
-                      </div>
-                      <div className={`w-12 h-12 bg-${stat.color}-100 rounded-lg flex items-center justify-center`}>
-                        <stat.icon className={`text-${stat.color}-600`} size={24} />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Created Quiz Link */}
-              {createdQuizLink && (
-                <div className="sidebar-card p-6 mb-6 bg-green-50 border border-green-200">
-                  <h3 className="text-xl font-semibold text-green-800 mb-4">Quiz Created Successfully! 🎉</h3>
-                  <div className="space-y-3">
-                    <label className="block text-sm font-medium text-green-700">Share this link with students:</label>
-                    <div className="flex space-x-2">
-                      <input
-                        type="text"
-                        value={createdQuizLink}
-                        readOnly
-                        className="flex-1 px-3 py-2 bg-white border border-green-300 rounded-lg text-sm"
-                      />
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(createdQuizLink);
-                          alert('Link copied to clipboard!');
-                        }}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                    <p className="text-xs text-green-600">Students can access this quiz directly using this link</p>
-                    <button
-                      onClick={() => setCreatedQuizLink('')}
-                      className="text-sm text-green-600 hover:text-green-800"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </div>
+          {loading ? (
+            <div className="flex justify-center items-center h-64">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500"></div>
+            </div>
+          ) : (
+            <>
+              {activeTab === 'overview' && (
+                <OverviewTab
+                  stats={stats}
+                  quizzes={quizzes}
+                  createdQuizLink={createdQuizLink}
+                  setCreatedQuizLink={setCreatedQuizLink}
+                  onToggleStatus={toggleQuizStatus}
+                  onDeleteQuiz={deleteQuiz}
+                  onRefresh={() => {
+                    getTeacherQuizzesWithAttempts(user.id).then(setQuizzes);
+                  }}
+                />
               )}
 
-              {/* Recent Quizzes */}
-              <div className="sidebar-card p-6">
-                <h3 className="text-xl font-semibold text-gray-900 mb-4">Recent Quizzes</h3>
-                <div className="space-y-4">
-                  {quizzes.slice(-5).map((quiz) => (
-                    <div key={quiz.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                      <div>
-                        <h4 className="font-medium text-gray-900">{quiz.title}</h4>
-                        <p className="text-sm text-gray-600">{quiz.attempts.length} attempts</p>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => toggleQuizStatus(quiz.id)}
-                          className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                            quiz.isActive 
-                              ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          }`}
-                        >
-                          {quiz.isActive ? 'Active' : 'Inactive'}
-                        </button>
-                        <button
-                          onClick={() => setCreatedQuizLink(quiz.shareLink)}
-                          className="p-2 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors"
-                          title="Show share link"
-                        >
-                          <Share2 size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+              {activeTab === 'create' && (
+                <CreateQuizForm
+                  onSubmit={handleCreateQuiz}
+                  onCancel={() => setActiveTab('overview')}
+                />
+              )}
 
-          {activeTab === 'create' && (
-            <CreateQuizForm onSubmit={handleCreateQuiz} onCancel={() => setActiveTab('overview')} />
-          )}
-
-          {activeTab === 'history' && (
-            <QuizHistory quizzes={quizzes} onToggleStatus={toggleQuizStatus} onDelete={deleteQuiz} />
+              {activeTab === 'history' && (
+                <HistoryTab quizzes={quizzes} />
+              )}
+            </>
           )}
         </div>
       </div>
@@ -308,16 +228,334 @@ const TeacherDashboard = () => {
   );
 };
 
-// Create Quiz Form Component
+// ================= Subkomponen =================
+
+const OverviewTab: React.FC<{
+  stats: any;
+  quizzes: FormattedQuiz[];
+  createdQuizLink: string;
+  setCreatedQuizLink: (link: string) => void;
+  onToggleStatus: (id: string, current: boolean) => void;
+  onDeleteQuiz: (id: string) => void;
+  onRefresh: () => void;
+}> = ({ stats, quizzes, createdQuizLink, setCreatedQuizLink, onToggleStatus, onDeleteQuiz, onRefresh }) => {
+  // Handler untuk toggle show_detailed_results
+  const handleToggleDetails = async (quizId: string, currentValue: boolean) => {
+    const newValue = !currentValue;
+    const success = await updateQuizShowDetails(quizId, newValue);
+    if (success) {
+      onRefresh(); // refresh data
+    } else {
+      alert('Failed to update setting.');
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-3xl font-bold text-gray-900 mb-8">Dashboard Overview</h2>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <StatCard label="Total Quizzes" value={stats.totalQuizzes} icon={BarChart3} color="purple" />
+        <StatCard label="Active Quizzes" value={stats.activeQuizzes} icon={Clock} color="green" />
+        <StatCard label="Total Attempts" value={stats.totalAttempts} icon={Users} color="blue" />
+        <StatCard label="Avg Score" value={`${stats.avgScore.toFixed(1)}%`} icon={BarChart3} color="orange" />
+      </div>
+
+      {/* Created Quiz Link */}
+      {createdQuizLink && (
+        <div className="sidebar-card p-6 mb-6 bg-green-50 border border-green-200">
+          <h3 className="text-xl font-semibold text-green-800 mb-4">Quiz Created Successfully! 🎉</h3>
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-green-700">Share this link with students:</label>
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={createdQuizLink}
+                readOnly
+                className="flex-1 px-3 py-2 bg-white border border-green-300 rounded-lg text-sm"
+              />
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(createdQuizLink);
+                  alert('Link copied to clipboard!');
+                }}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
+              >
+                Copy
+              </button>
+            </div>
+            <button
+              onClick={() => setCreatedQuizLink('')}
+              className="text-sm text-green-600 hover:text-green-800"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Recent Quizzes */}
+      <div className="sidebar-card p-6">
+        <h3 className="text-xl font-semibold text-gray-900 mb-4">Recent Quizzes</h3>
+        {quizzes.length === 0 ? (
+          <p className="text-gray-500 text-center py-8">No quizzes created yet.</p>
+        ) : (
+          <div className="space-y-4">
+            {quizzes.slice(0, 5).map((quiz) => (
+              <div key={quiz.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div>
+                  <h4 className="font-medium text-gray-900">{quiz.title}</h4>
+                  <p className="text-sm text-gray-600">{quiz.attempts.length} attempts</p>
+                </div>
+                <div className="flex items-center space-x-2 flex-wrap gap-2">
+                  {/* Toggle untuk show_detailed_results */}
+                  <button
+                    onClick={() => handleToggleDetails(quiz.id, quiz.show_detailed_results)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                      quiz.show_detailed_results
+                        ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {quiz.show_detailed_results ? 'Details ON' : 'Details OFF'}
+                  </button>
+                  <button
+                    onClick={() => onToggleStatus(quiz.id, quiz.is_public)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                      quiz.is_public
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {quiz.is_public ? 'Active' : 'Inactive'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const link = `${window.location.origin}/quiz/shared/${quiz.id}`;
+                      navigator.clipboard.writeText(link);
+                      alert('Link copied!');
+                    }}
+                    className="p-2 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors"
+                    title="Copy share link"
+                  >
+                    <Share2 size={16} />
+                  </button>
+                  <button
+                    onClick={() => onDeleteQuiz(quiz.id)}
+                    className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                    title="Delete quiz"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Stat Card
+const StatCard = ({ label, value, icon: Icon, color }: any) => (
+  <div className="sidebar-card p-6">
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-sm text-gray-600 mb-1">{label}</p>
+        <p className="text-2xl font-bold text-gray-900">{value}</p>
+      </div>
+      <div className={`w-12 h-12 bg-${color}-100 rounded-lg flex items-center justify-center`}>
+        <Icon className={`text-${color}-600`} size={24} />
+      </div>
+    </div>
+  </div>
+);
+
+// History Tab – menampilkan semua quiz dengan daftar siswa dan tombol detail
+const HistoryTab: React.FC<{ quizzes: FormattedQuiz[] }> = ({ quizzes }) => {
+  const [selectedAttempt, setSelectedAttempt] = useState<any>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  const viewAttemptDetails = async (attemptId: string) => {
+    setLoadingDetail(true);
+    try {
+      const data = await getStudentAttemptWithQuizDetails(attemptId);
+      if (data) {
+        setSelectedAttempt(data);
+        setModalOpen(true);
+      } else {
+        alert('Failed to load attempt details.');
+      }
+    } catch (error) {
+      console.error('Error fetching attempt details:', error);
+      alert('Error loading details.');
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  if (quizzes.length === 0) {
+    return (
+      <div>
+        <h2 className="text-3xl font-bold text-gray-900 mb-8">Quiz History</h2>
+        <div className="sidebar-card p-12 text-center">
+          <History className="mx-auto text-gray-400 mb-4" size={64} />
+          <h3 className="text-xl font-semibold text-gray-900 mb-2">No Quizzes Found</h3>
+          <p className="text-gray-600">Create your first quiz to see results here.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <h2 className="text-3xl font-bold text-gray-900 mb-8">Quiz History</h2>
+      <div className="space-y-8">
+        {quizzes.map((quiz) => (
+          <div key={quiz.id} className="sidebar-card p-6">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-semibold text-gray-900">{quiz.title}</h3>
+                <p className="text-sm text-gray-500">
+                  Created: {new Date(quiz.created_at).toLocaleDateString()} •
+                  {quiz.attempts.length} attempts
+                </p>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                quiz.is_public ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+              }`}>
+                {quiz.is_public ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+
+            {quiz.attempts.length === 0 ? (
+              <p className="text-gray-500 text-sm py-4">No student has attempted this quiz yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-gray-600 font-medium">Student</th>
+                      <th className="px-4 py-2 text-left text-gray-600 font-medium">Score</th>
+                      <th className="px-4 py-2 text-left text-gray-600 font-medium">Percentage</th>
+                      <th className="px-4 py-2 text-left text-gray-600 font-medium">Time Taken</th>
+                      <th className="px-4 py-2 text-left text-gray-600 font-medium">Completed</th>
+                      <th className="px-4 py-2 text-left text-gray-600 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {quiz.attempts.map((attempt) => (
+                      <tr key={attempt.id}>
+                        <td className="px-4 py-3 text-gray-800">{attempt.studentName}</td>
+                        <td className="px-4 py-3 text-gray-800">{attempt.score} / {attempt.totalQuestions}</td>
+                        <td className="px-4 py-3">
+                          <span className={`font-medium ${
+                            attempt.totalQuestions > 0
+                              ? (attempt.score / attempt.totalQuestions) >= 0.8 ? 'text-green-600'
+                                : (attempt.score / attempt.totalQuestions) >= 0.6 ? 'text-yellow-600'
+                                : 'text-red-600'
+                              : 'text-gray-500'
+                          }`}>
+                            {attempt.totalQuestions > 0
+                              ? ((attempt.score / attempt.totalQuestions) * 100).toFixed(1) + '%'
+                              : 'N/A'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">{Math.round(attempt.timeTaken / 60)} min</td>
+                        <td className="px-4 py-3 text-gray-500">
+                          {attempt.completedAt.toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => viewAttemptDetails(attempt.id)}
+                            className="flex items-center space-x-1 text-purple-600 hover:text-purple-800 transition-colors"
+                          >
+                            <Eye size={16} />
+                            <span>View</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Modal Detail Attempt */}
+      {modalOpen && selectedAttempt && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 relative">
+            <button
+              onClick={() => setModalOpen(false)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
+            >
+              <X size={24} />
+            </button>
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">
+              {selectedAttempt.quiz.title} – Details
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Student: {selectedAttempt.attempt.student_id} • Score: {selectedAttempt.attempt.score}/{selectedAttempt.attempt.total_points}
+            </p>
+
+            {selectedAttempt.show_detailed_results ? (
+              <div className="space-y-6">
+                {selectedAttempt.quiz.questions.map((q: any, idx: number) => {
+                  const userAnswer = selectedAttempt.attempt.answers[idx];
+                  const isCorrect = userAnswer === q.correct;
+                  return (
+                    <div key={idx} className="border rounded-lg p-4">
+                      <p className="font-medium text-gray-900">{idx+1}. {q.question}</p>
+                      <div className="mt-2 space-y-1">
+                        {q.options.map((opt: string, optIdx: number) => {
+                          let className = 'px-3 py-1 rounded text-sm ';
+                          if (optIdx === q.correct) className += 'bg-green-100 text-green-800';
+                          else if (optIdx === userAnswer && !isCorrect) className += 'bg-red-100 text-red-800';
+                          else className += 'bg-gray-50 text-gray-700';
+                          return (
+                            <div key={optIdx} className={className}>
+                              {opt} {optIdx === q.correct && '✓'} {optIdx === userAnswer && userAnswer !== q.correct && '✗'}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-sm mt-2">
+                        Your answer: {userAnswer !== undefined ? q.options[userAnswer] || 'Not answered' : 'Not answered'}
+                        {isCorrect ? ' ✅' : ' ❌'}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <p>Detailed results are not available for this quiz.</p>
+                <p className="text-sm">The teacher has disabled detailed result viewing.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Create Quiz Form (sama seperti sebelumnya, hanya di-import)
 const CreateQuizForm: React.FC<{
-  onSubmit: (quiz: Omit<Quiz, 'id' | 'createdAt' | 'shareLink' | 'attempts'>) => void;
+  onSubmit: (quiz: any) => void;
   onCancel: () => void;
 }> = ({ onSubmit, onCancel }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [timeLimit, setTimeLimit] = useState<number>(0);
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [currentQuestion, setCurrentQuestion] = useState<Partial<Question>>({
+  const [timeLimit, setTimeLimit] = useState<number>(15);
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [currentQuestion, setCurrentQuestion] = useState<any>({
     question: '',
     options: ['', '', '', ''],
     correct: 0,
@@ -325,14 +563,14 @@ const CreateQuizForm: React.FC<{
   });
 
   const addQuestion = () => {
-    if (currentQuestion.question && currentQuestion.options?.every(opt => opt.trim())) {
+    if (currentQuestion.question && currentQuestion.options.every((opt: string) => opt.trim())) {
       setQuestions([...questions, {
         ...currentQuestion,
         id: Date.now(),
-        options: currentQuestion.options || ['', '', '', ''],
+        options: currentQuestion.options,
         correct: currentQuestion.correct || 0,
         type: currentQuestion.type || 'text'
-      } as Question]);
+      }]);
       setCurrentQuestion({
         question: '',
         options: ['', '', '', ''],
@@ -348,8 +586,8 @@ const CreateQuizForm: React.FC<{
       onSubmit({
         title,
         description,
+        timeLimit,
         questions,
-        timeLimit: timeLimit > 0 ? timeLimit : undefined,
         isActive: true
       });
     }
@@ -358,11 +596,9 @@ const CreateQuizForm: React.FC<{
   return (
     <div className="max-w-4xl mx-auto">
       <h2 className="text-3xl font-bold text-gray-900 mb-8">Create New Quiz</h2>
-      
       <form onSubmit={handleSubmit} className="space-y-8">
         <div className="sidebar-card p-6">
           <h3 className="text-xl font-semibold text-gray-900 mb-4">Quiz Details</h3>
-          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Quiz Title</label>
@@ -370,30 +606,28 @@ const CreateQuizForm: React.FC<{
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200"
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
                 required
               />
             </div>
-            
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Time Limit (minutes)</label>
               <input
                 type="number"
                 value={timeLimit}
                 onChange={(e) => setTimeLimit(parseInt(e.target.value) || 0)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200"
-                placeholder="0 for no limit"
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                min="1"
               />
             </div>
           </div>
-          
           <div className="mt-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
               required
             />
           </div>
@@ -402,32 +636,31 @@ const CreateQuizForm: React.FC<{
         {/* Add Question Section */}
         <div className="sidebar-card p-6">
           <h3 className="text-xl font-semibold text-gray-900 mb-4">Add Question</h3>
-          
           <div className="space-y-4">
             <div className="flex space-x-4 mb-4">
               <button
                 type="button"
                 onClick={() => setCurrentQuestion({...currentQuestion, type: 'text'})}
                 className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all ${
-                  currentQuestion.type === 'text' 
-                    ? 'bg-purple-100 text-purple-700' 
+                  currentQuestion.type === 'text'
+                    ? 'bg-purple-100 text-purple-700'
                     : 'bg-gray-100 text-gray-600 hover:bg-purple-50'
                 }`}
               >
                 <Type size={16} />
-                <span>Text Question</span>
+                <span>Text</span>
               </button>
               <button
                 type="button"
                 onClick={() => setCurrentQuestion({...currentQuestion, type: 'image'})}
                 className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all ${
-                  currentQuestion.type === 'image' 
-                    ? 'bg-purple-100 text-purple-700' 
+                  currentQuestion.type === 'image'
+                    ? 'bg-purple-100 text-purple-700'
                     : 'bg-gray-100 text-gray-600 hover:bg-purple-50'
                 }`}
               >
                 <Image size={16} />
-                <span>Image Question</span>
+                <span>Image</span>
               </button>
             </div>
 
@@ -437,7 +670,7 @@ const CreateQuizForm: React.FC<{
                 type="text"
                 value={currentQuestion.question}
                 onChange={(e) => setCurrentQuestion({...currentQuestion, question: e.target.value})}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200"
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
                 placeholder="Enter your question"
               />
             </div>
@@ -458,7 +691,7 @@ const CreateQuizForm: React.FC<{
                       reader.readAsDataURL(file);
                     }
                   }}
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200"
                 />
                 {currentQuestion.imageUrl && (
                   <div className="mt-2">
@@ -469,34 +702,34 @@ const CreateQuizForm: React.FC<{
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Options (Click to select correct answer)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Options (Click to select correct)</label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {currentQuestion.options?.map((option, index) => (
+                {currentQuestion.options.map((option: string, index: number) => (
                   <div key={index} className="flex items-center space-x-2">
                     <input
                       type="radio"
                       name="correct"
                       checked={currentQuestion.correct === index}
                       onChange={() => setCurrentQuestion({...currentQuestion, correct: index})}
-                      className="text-purple-600 w-4 h-4"
+                      className="text-purple-600"
                     />
                     <input
                       type="text"
                       value={option}
                       onChange={(e) => {
-                        const newOptions = [...(currentQuestion.options || [])];
+                        const newOptions = [...currentQuestion.options];
                         newOptions[index] = e.target.value;
                         setCurrentQuestion({...currentQuestion, options: newOptions});
                       }}
-                      className={`flex-1 px-3 py-2 rounded-lg border transition-all duration-200 ${
-                        currentQuestion.correct === index 
-                          ? 'border-green-500 bg-green-50' 
-                          : 'border-gray-200 focus:border-purple-500 focus:ring-1 focus:ring-purple-200'
+                      className={`flex-1 px-3 py-2 rounded-lg border transition-all ${
+                        currentQuestion.correct === index
+                          ? 'border-green-500 bg-green-50'
+                          : 'border-gray-200'
                       }`}
                       placeholder={`Option ${index + 1}`}
                     />
                     {currentQuestion.correct === index && (
-                      <span className="text-green-600 text-sm font-medium">Correct</span>
+                      <span className="text-green-600 text-sm font-medium">✓</span>
                     )}
                   </div>
                 ))}
@@ -518,20 +751,13 @@ const CreateQuizForm: React.FC<{
           <div className="sidebar-card p-6">
             <h3 className="text-xl font-semibold text-gray-900 mb-4">Questions ({questions.length})</h3>
             <div className="space-y-4">
-              {questions.map((question, index) => (
-                <div key={question.id} className="p-4 bg-gray-50 rounded-lg">
-                  <h4 className="font-medium text-gray-900 mb-2">{index + 1}. {question.question}</h4>
+              {questions.map((q, idx) => (
+                <div key={q.id} className="p-4 bg-gray-50 rounded-lg">
+                  <h4 className="font-medium text-gray-900">{idx + 1}. {q.question}</h4>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {question.options.map((option, optIndex) => (
-                      <span
-                        key={optIndex}
-                        className={`px-2 py-1 rounded ${
-                          question.correct === optIndex 
-                            ? 'bg-green-100 text-green-700 font-medium' 
-                            : 'bg-white text-gray-600'
-                        }`}
-                      >
-                        {option}
+                    {q.options.map((opt: string, i: number) => (
+                      <span key={i} className={`px-2 py-1 rounded ${q.correct === i ? 'bg-green-100 text-green-700' : 'bg-white'}`}>
+                        {opt}
                       </span>
                     ))}
                   </div>
@@ -552,96 +778,12 @@ const CreateQuizForm: React.FC<{
           <button
             type="button"
             onClick={onCancel}
-            className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
+            className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50"
           >
             Cancel
           </button>
         </div>
       </form>
-    </div>
-  );
-};
-
-// Quiz History Component
-const QuizHistory: React.FC<{
-  quizzes: Quiz[];
-  onToggleStatus: (quizId: string) => void;
-  onDelete: (quizId: string) => void;
-}> = ({ quizzes, onToggleStatus, onDelete }) => {
-  return (
-    <div>
-      <h2 className="text-3xl font-bold text-gray-900 mb-8">Quiz History</h2>
-      
-      <div className="space-y-6">
-        {quizzes.map((quiz) => (
-          <div key={quiz.id} className="sidebar-card p-6">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-xl font-semibold text-gray-900">{quiz.title}</h3>
-                <p className="text-gray-600 mt-1">{quiz.description}</p>
-                <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
-                  <span>{quiz.questions.length} questions</span>
-                  <span>{quiz.attempts.length} attempts</span>
-                  {quiz.timeLimit && <span>{quiz.timeLimit} min limit</span>}
-                </div>
-              </div>
-              
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => onToggleStatus(quiz.id)}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                    quiz.isActive 
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {quiz.isActive ? 'Active' : 'Inactive'}
-                </button>
-                <button
-                  onClick={() => navigator.clipboard.writeText(quiz.shareLink)}
-                  className="p-2 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors"
-                  title="Copy share link"
-                >
-                  <Share2 size={16} />
-                </button>
-                <button
-                  onClick={() => onDelete(quiz.id)}
-                  className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
-                  title="Delete quiz"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
-
-            {quiz.attempts.length > 0 && (
-              <div className="border-t pt-4">
-                <h4 className="font-medium text-gray-900 mb-3">Recent Attempts</h4>
-                <div className="space-y-2">
-                  {quiz.attempts.slice(-3).map((attempt) => (
-                    <div key={attempt.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div>
-                        <span className="font-medium text-gray-900">{attempt.studentName}</span>
-                        <span className="text-gray-500 ml-2">
-                          {new Date(attempt.completedAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className="font-medium text-gray-900">
-                          {attempt.score}/{attempt.totalQuestions}
-                        </span>
-                        <span className="text-sm text-gray-500 ml-1">
-                          ({Math.round((attempt.score / attempt.totalQuestions) * 100)}%)
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
     </div>
   );
 };

@@ -1,3 +1,4 @@
+// src/lib/quizStorage.ts
 import { supabase } from '@/integrations/supabase/client';
 import { Question } from '@/data/quizQuestions';
 
@@ -351,14 +352,14 @@ export const storeQuizAttempt = async (
   }
 };
 
-// Get user's quiz attempts
+// Get user's quiz attempts (with quiz title and show_detailed_results flag)
 export const getUserQuizAttempts = async (userId: string) => {
   try {
     const { data, error } = await supabase
       .from('quiz_attempts')
       .select(`
         *,
-        quiz:quizzes(title)
+        quiz:quizzes(id, title, show_detailed_results)
       `)
       .eq('student_id', userId)
       .order('completed_at', { ascending: false });
@@ -430,5 +431,118 @@ export const getDefaultQuizzes = async (): Promise<DatabaseQuiz[]> => {
     
     console.error('Error fetching default quizzes:', error);
     return [];
+  }
+};
+
+// ========== FUNGSI UNTUK TEACHER DASHBOARD ==========
+// Get teacher's quizzes with attempts and student names
+export const getTeacherQuizzesWithAttempts = async (teacherId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from('quizzes')
+      .select(`
+        *,
+        attempts:quiz_attempts(
+          *,
+          student:profiles(name, email)
+        )
+      `)
+      .eq('teacher_id', teacherId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching teacher quizzes with attempts:', error);
+      return [];
+    }
+
+    // Format data untuk frontend
+    return data.map((quiz: any) => ({
+      ...quiz,
+      attempts: quiz.attempts.map((attempt: any) => ({
+        id: attempt.id,
+        studentName: attempt.student?.name || 'Unknown',
+        studentEmail: attempt.student?.email || '',
+        score: attempt.score || 0,
+        totalQuestions: attempt.total_points || 0,
+        completedAt: new Date(attempt.completed_at),
+        timeTaken: attempt.time_taken || 0,
+        answers: attempt.answers || [],
+      })),
+    }));
+  } catch (error) {
+    console.error('Error in getTeacherQuizzesWithAttempts:', error);
+    return [];
+  }
+};
+
+// ========== FUNGSI BARU UNTUK DETAIL RESULTS ==========
+// Update quiz's show_detailed_results flag
+export const updateQuizShowDetails = async (quizId: string, show: boolean): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('quizzes')
+      .update({ show_detailed_results: show })
+      .eq('id', quizId);
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error('Error updating quiz show details:', error);
+    return false;
+  }
+};
+
+// Get a quiz with questions and also the show_detailed_results flag
+export const getQuizWithQuestionsAndDetailsFlag = async (quizId: string) => {
+  try {
+    const quiz = await getQuizWithQuestions(quizId);
+    if (!quiz) return null;
+    // Fetch the show_detailed_results flag separately
+    const { data, error } = await supabase
+      .from('quizzes')
+      .select('show_detailed_results')
+      .eq('id', quizId)
+      .single();
+    if (error) throw error;
+    return {
+      ...quiz,
+      show_detailed_results: data?.show_detailed_results || false,
+    };
+  } catch (error) {
+    console.error('Error fetching quiz with details flag:', error);
+    return null;
+  }
+};
+
+// Get a student's attempt with quiz details (including questions) for detailed view
+export const getStudentAttemptWithQuizDetails = async (attemptId: string) => {
+  try {
+    // Get attempt
+    const { data: attempt, error: attemptError } = await supabase
+      .from('quiz_attempts')
+      .select('*')
+      .eq('id', attemptId)
+      .single();
+    if (attemptError) throw attemptError;
+
+    // Get quiz with questions
+    const quiz = await getQuizWithQuestions(attempt.quiz_id);
+    if (!quiz) throw new Error('Quiz not found');
+
+    // Get show_detailed_results flag
+    const { data: quizData, error: quizError } = await supabase
+      .from('quizzes')
+      .select('show_detailed_results')
+      .eq('id', attempt.quiz_id)
+      .single();
+    if (quizError) throw quizError;
+
+    return {
+      attempt,
+      quiz,
+      show_detailed_results: quizData?.show_detailed_results || false,
+    };
+  } catch (error) {
+    console.error('Error fetching student attempt with quiz details:', error);
+    return null;
   }
 };
