@@ -1,125 +1,97 @@
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Trophy, Star, RotateCcw, Home } from 'lucide-react';
-import ProgressChart from '../components/ProgressChart';
+// src/pages/Results.tsx
+import React from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { CheckCircle, XCircle, Home, Award } from 'lucide-react';
 
 const Results = () => {
-  const location = useLocation();
   const navigate = useNavigate();
-  const { score, total, answers, questions } = location.state || {};
+  const location = useLocation();
+  const { score, total, answers, essayAnswers, questions, quizTitle } = location.state || {};
 
-
-  if (!score && score !== 0) {
-    navigate('/');
-    return null;
+  if (!questions) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">No results found</h2>
+          <button onClick={() => navigate('/')} className="text-purple-600 hover:text-purple-800">
+            Go Home
+          </button>
+        </div>
+      </div>
+    );
   }
 
-  const percentage = Math.round((score / total) * 100);
-  const chartData = [
-    { name: 'Correct', value: score },
-    { name: 'Incorrect', value: total - score },
-  ];
-
-  const getGradeMessage = () => {
-    if (percentage >= 90) return { message: "Outstanding!", color: "text-green-600", emoji: "🎉" };
-    if (percentage >= 80) return { message: "Great job!", color: "text-blue-600", emoji: "👏" };
-    if (percentage >= 70) return { message: "Good work!", color: "text-yellow-600", emoji: "👍" };
-    if (percentage >= 60) return { message: "Not bad!", color: "text-orange-600", emoji: "💪" };
-    return { message: "Keep practicing!", color: "text-red-600", emoji: "📚" };
-  };
-
-  const grade = getGradeMessage();
+  const percentage = total > 0 ? (score / total) * 100 : 0;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Congratulations Section */}
-      <div className="text-center mb-8">
-        <div className="quiz-gradient w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
-          <Trophy size={48} className="text-white" />
-        </div>
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">Quiz Complete!</h1>
-        <p className="text-xl text-gray-600">{grade.emoji} {grade.message}</p>
-      </div>
-
-      {/* Score Display */}
-      <div className="quiz-card p-8 text-center mb-8">
-        <div className="text-6xl font-bold quiz-gradient bg-clip-text text-transparent mb-4">
-          {percentage}%
-        </div>
-        <div className="text-2xl text-gray-700 mb-2">
-          {score} out of {total} correct
-        </div>
-        <div className="flex items-center justify-center space-x-1">
-          {[...Array(5)].map((_, i) => (
-            <Star
-              key={i}
-              size={24}
-              className={`${
-                i < Math.floor(percentage / 20)
-                  ? 'text-yellow-400 fill-current'
-                  : 'text-gray-300'
-              }`}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-        {/* Performance Chart */}
-        <div className="quiz-card p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Performance Breakdown</h3>
-          <ProgressChart type="pie" data={chartData} />
-        </div>
-
-        {/* Question Review */}
-        <div className="quiz-card p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Question Review</h3>
-          <div className="space-y-3 max-h-64 overflow-y-auto">
-            {questions?.map((question: any, index: number) => (
-              <div
-                key={index}
-                className={`p-3 rounded-lg border ${
-                  answers[index] === question.correct
-                    ? 'bg-green-50 border-green-200'
-                    : 'bg-red-50 border-red-200'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">
-                    Question {index + 1}
-                  </span>
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    answers[index] === question.correct
-                      ? 'bg-green-100 text-green-700'
-                      : 'bg-red-100 text-red-700'
-                  }`}>
-                    {answers[index] === question.correct ? 'Correct' : 'Incorrect'}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-600 mt-1 truncate">
-                  {question.question}
-                </p>
-              </div>
-            ))}
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50 py-8 px-4">
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-4">{quizTitle || 'Quiz Results'}</h1>
+          <div className="flex items-center space-x-4">
+            <div className="bg-purple-100 p-4 rounded-full">
+              <Award className="text-purple-600" size={32} />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-gray-900">
+                {score} / {total}
+              </p>
+              <p className="text-gray-600">
+                {percentage.toFixed(1)}% – {percentage >= 80 ? 'Excellent! 🎉' : percentage >= 60 ? 'Good Job! 👍' : 'Keep Practicing! 💪'}
+              </p>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Action Buttons */}
-      <div className="flex flex-col sm:flex-row gap-4 justify-center">
-        <button
-          onClick={() => navigate('/quiz')}
-          className="quiz-button flex items-center justify-center space-x-2"
-        >
-          <RotateCcw size={20} />
-          <span>Retake Quiz</span>
-        </button>
-        <button
-          onClick={() => navigate('/')}
-          className="bg-white border-2 border-purple-500 text-purple-600 hover:bg-purple-50 font-medium py-3 px-6 rounded-xl transition-all duration-200 flex items-center justify-center space-x-2"
-        >
-          <Home size={20} />
-          <span>Back to Home</span>
-        </button>
+        <div className="space-y-6">
+          {questions.map((q: any, index: number) => (
+            <div key={index} className="bg-white rounded-xl shadow-lg p-6">
+              <p className="font-semibold text-gray-900 mb-3">
+                {index + 1}. {q.question}
+              </p>
+              {q.imageUrl && (
+                <img src={q.imageUrl} alt="Question" className="max-w-xs h-32 object-cover rounded-lg mb-3" />
+              )}
+
+              {q.type === 'essay' ? (
+                <div className="mt-3 p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Your Essay Answer:</p>
+                  <p className="mt-1 whitespace-pre-wrap">{essayAnswers?.[index] || 'No answer provided'}</p>
+                  <p className="text-sm text-gray-500 mt-2">
+                    This essay will be graded by your teacher.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2 mt-2">
+                  {q.options.map((option: string, optIdx: number) => {
+                    const isCorrect = optIdx === q.correct;
+                    const isSelected = answers && answers[index] === optIdx;
+                    let className = 'px-4 py-2 rounded-lg text-sm ';
+                    if (isCorrect) className += 'bg-green-100 text-green-800 border-green-500';
+                    else if (isSelected && !isCorrect) className += 'bg-red-100 text-red-800 border-red-500';
+                    else className += 'bg-gray-50 text-gray-700';
+                    return (
+                      <div key={optIdx} className={className}>
+                        {option} {isCorrect && <CheckCircle className="inline ml-2 text-green-600" size={16} />}
+                        {isSelected && !isCorrect && <XCircle className="inline ml-2 text-red-600" size={16} />}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-8 flex justify-center">
+          <button
+            onClick={() => navigate('/')}
+            className="flex items-center space-x-2 px-6 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-all shadow-lg hover:shadow-xl"
+          >
+            <Home size={20} />
+            <span>Go Home</span>
+          </button>
+        </div>
       </div>
     </div>
   );

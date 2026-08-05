@@ -1,8 +1,18 @@
 // src/lib/quizStorage.ts
 import { supabase } from '@/integrations/supabase/client';
-import { Question } from '@/data/quizQuestions';
 
-export interface DatabaseQuiz {
+export interface Question {
+  id?: number | string;
+  question: string;
+  type: 'multiple_choice' | 'essay';
+  options?: string[];
+  correct?: number;
+  points?: number;
+  imageUrl?: string;
+  order_index?: number;
+}
+
+export interface Quiz {
   id: string;
   title: string;
   description: string;
@@ -11,31 +21,24 @@ export interface DatabaseQuiz {
   teacher_id: string;
   created_at: string;
   updated_at: string;
+  show_detailed_results?: boolean;
 }
 
-export interface DatabaseQuestion {
-  id: string;
-  quiz_id: string;
-  question_text: string;
-  options: string[];
-  correct_answer: string;
-  question_type: string;
-  order_index: number;
-  points: number;
-}
-
-export interface DatabaseQuizAttempt {
+export interface QuizAttempt {
   id: string;
   quiz_id: string;
   student_id: string;
+  answers: any[];
+  essay_answers: any;
   score: number;
   total_points: number;
+  question_scores: any;
   time_taken: number;
-  answers: number[];
   completed_at: string;
+  started_at: string;
 }
 
-// Store a quiz with its questions in the database
+// Create quiz with questions
 export const createQuizInDB = async (
   quizData: {
     title: string;
@@ -47,285 +50,137 @@ export const createQuizInDB = async (
   userId: string
 ): Promise<string | null> => {
   try {
-    console.log('Creating quiz with data:', {
-      ...quizData,
-      questions: quizData.questions.map(q => ({
-        ...q,
-        options: q.options // Just show the options for debugging
-      }))
-    });
-
     // Insert quiz
     const { data: quiz, error: quizError } = await supabase
       .from('quizzes')
       .insert({
         title: quizData.title,
         description: quizData.description,
-        time_limit: quizData.timeLimit * 60, // Convert minutes to seconds
+        time_limit: quizData.timeLimit * 60,
         is_public: quizData.isActive ?? true,
         teacher_id: userId,
-        created_at: new Date().toISOString()
+        show_detailed_results: false,
       })
       .select()
       .single();
 
-    if (quizError) {
-      console.error('Error creating quiz:', quizError);
-      return null;
-    }
+    if (quizError) throw quizError;
+    if (!quiz) return null;
 
-    if (!quiz) {
-      console.error('No quiz data returned after creation');
-      return null;
-    }
+    // Prepare questions
+    const questionsToInsert = quizData.questions.map((q, index) => {
+      const baseQuestion = {
+        quiz_id: quiz.id,
+        question_text: q.question,
+        order_index: index,
+        points: q.points || 1,
+        created_at: new Date().toISOString(),
+        question_type: q.type === 'essay' ? 'essay' : 'multiple_choice',
+        essay_question: q.type === 'essay',
+        image_url: q.imageUrl || null,
+      };
 
-    console.log('Quiz created with ID:', quiz.id);
-    console.log('Quiz data:', {
-      id: quiz.id,
-      title: quizData.title,
-      description: quizData.description,
-      time_limit: quizData.timeLimit * 60,
-      is_public: quizData.isActive ?? true,
-      teacher_id: userId
+      if (q.type === 'essay') {
+        return {
+          ...baseQuestion,
+          correct_answer: '',
+          options: null,
+        };
+      } else {
+        const options = q.options || [];
+        const correctAnswer = q.correct !== undefined ? String(q.correct) : '0';
+        return {
+          ...baseQuestion,
+          correct_answer: correctAnswer,
+          options: JSON.stringify(options),
+        };
+      }
     });
 
-    // Prepare questions for insertion
-    console.log('Preparing to insert questions...');
-    const questionsToInsert = [];
-    
-    for (let i = 0; i < quizData.questions.length; i++) {
-      const question = quizData.questions[i];
-      try {
-        console.log('Processing question:', question);
-        
-        // Ensure options is an array of strings
-        const options = Array.isArray(question.options) 
-          ? question.options.map(opt => String(opt).trim()).filter(opt => opt.length > 0)
-          : [];
-        
-        console.log('Processed options:', options);
-        
-        if (options.length === 0) {
-          console.warn(`Question ${i + 1} has no valid options, skipping`);
-          continue;
-        }
-        
-        // Ensure correct answer is within bounds
-        const correct = typeof question.correct === 'number' 
-          ? Math.max(0, Math.min(question.correct, options.length - 1)) 
-          : 0;
+    const { error: questionsError } = await supabase
+      .from('questions')
+      .insert(questionsToInsert);
 
-        const questionData = {
-          quiz_id: quiz.id,
-          question_text: String(question.question || `Question ${i + 1}`).trim(),
-          options: JSON.stringify(options), // Convert array to JSON string
-          correct_answer: String(correct).trim(),
-          order_index: i,
-          question_type: 'multiple_choice', // Must match the check constraint in the database
-          points: 1,
-          created_at: new Date().toISOString()
-        };
-
-        console.log('Prepared question data:', questionData);
-
-        // Validate the question data
-        if (!questionData.question_text) {
-          console.warn(`Question ${i + 1} has no text, skipping`);
-          continue;
-        }
-
-        if (questionData.options.length < 2) {
-          console.warn(`Question ${i + 1} needs at least 2 options, skipping`);
-          continue;
-        }
-
-        questionsToInsert.push(questionData);
-      } catch (error) {
-        console.error(`Error processing question ${i + 1}:`, error);
-      }
-    }
-    
-    console.log('Questions to be inserted:', JSON.stringify(questionsToInsert, null, 2));
-
-    if (questionsToInsert.length === 0) {
-      console.error('No valid questions to insert');
+    if (questionsError) {
+      console.error('Error inserting questions:', questionsError);
       await supabase.from('quizzes').delete().eq('id', quiz.id);
       return null;
     }
 
-    console.log('Inserting questions...');
-
-    try {
-      // Insert questions one by one to identify any problematic ones
-      const insertedQuestions = [];
-      
-      for (const question of questionsToInsert) {
-        try {
-          console.log('Inserting question:', question.question_text);
-          console.log('Question data to insert:', JSON.stringify(question, null, 2));
-          
-          // Validate required fields
-          const requiredFields = ['quiz_id', 'question_text', 'options', 'correct_answer', 'order_index', 'question_type', 'points', 'created_at'];
-          const missingFields = requiredFields.filter(field => question[field] === undefined || question[field] === null);
-          
-          if (missingFields.length > 0) {
-            throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
-          }
-          
-          const { data, error } = await supabase
-            .from('questions')
-            .insert({
-              quiz_id: question.quiz_id,
-              question_text: question.question_text,
-              options: question.options,
-              correct_answer: question.correct_answer,
-              order_index: question.order_index,
-              question_type: 'multiple_choice', // Ensure it matches the check constraint
-              points: question.points,
-              created_at: question.created_at
-            })
-            .select()
-            .single();
-            
-          if (error) {
-            console.error('Error inserting question:', {
-              question: question.question_text,
-              error: {
-                code: error.code,
-                message: error.message,
-                details: error.details,
-                hint: error.hint
-              },
-              questionData: question
-            });
-            throw error;
-          }
-          
-          console.log('Successfully inserted question:', data);
-          insertedQuestions.push(data);
-        } catch (error) {
-          console.error('Failed to insert question. Question data:', JSON.stringify(question, null, 2));
-          console.error('Error details:', {
-            message: error.message,
-            stack: error.stack,
-            ...(error.response?.data && { responseData: error.response.data }),
-            ...(error.response?.status && { statusCode: error.response.status })
-          });
-          throw error; // Re-throw to trigger the cleanup
-        }
-      }
-      
-      console.log('Successfully inserted questions:', insertedQuestions);
-      console.log('Successfully created quiz with questions');
-      return quiz.id;
-    } catch (error) {
-      console.error('Error in questions transaction:', error);
-      await supabase.from('quizzes').delete().eq('id', quiz.id);
-      return null;
-    }
+    return quiz.id;
   } catch (error) {
-    console.error('Error in createQuizInDB:', error);
+    console.error('Error creating quiz:', error);
     return null;
   }
 };
 
-// Get all quizzes created by a teacher
-export const getTeacherQuizzes = async (userId: string): Promise<DatabaseQuiz[]> => {
-  try {
-    const { data, error } = await supabase
-      .from('quizzes')
-      .select('*')
-      .eq('teacher_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching teacher quizzes:', error);
-      return [];
-    }
-
-    return data || [];
-  } catch (error) {
-    console.error('Error fetching teacher quizzes:', error);
-    return [];
-  }
-};
-
-// Get a quiz with its questions
+// Get quiz with questions
 export const getQuizWithQuestions = async (quizId: string) => {
   try {
-    // Get quiz details
     const { data: quiz, error: quizError } = await supabase
       .from('quizzes')
       .select('*')
       .eq('id', quizId)
       .single();
 
-    if (quizError) {
-      console.error('Error fetching quiz:', quizError);
-      return null;
-    }
+    if (quizError) throw quizError;
 
-    // Get questions
     const { data: questionsData, error: questionsError } = await supabase
       .from('questions')
       .select('*')
       .eq('quiz_id', quizId)
       .order('order_index');
 
-    if (questionsError) {
-      console.error('Error fetching questions:', questionsError);
-      return null;
-    }
+    if (questionsError) throw questionsError;
 
-    // Transform the database format to our app's format
-    const questions = questionsData.map(q => {
-      // Parse options JSON string back to array
-      let options = [];
-      try {
-        options = typeof q.options === 'string' ? JSON.parse(q.options) : (q.options || []);
-      } catch (e) {
-        console.error('Error parsing question options:', e);
-        options = [];
+    const questions = questionsData.map((q) => {
+      if (q.question_type === 'essay' || q.essay_question) {
+        return {
+          id: q.id,
+          question: q.question_text,
+          type: 'essay' as const,
+          points: q.points || 1,
+          imageUrl: q.image_url || undefined,
+        };
+      } else {
+        let options = [];
+        try {
+          options = typeof q.options === 'string' ? JSON.parse(q.options) : (q.options || []);
+        } catch (e) {
+          options = [];
+        }
+        return {
+          id: q.id,
+          question: q.question_text,
+          type: 'multiple_choice' as const,
+          options: options,
+          correct: parseInt(q.correct_answer, 10) || 0,
+          points: q.points || 1,
+          imageUrl: q.image_url || undefined,
+        };
       }
-
-      return {
-        id: q.id,
-        question: q.question_text,
-        options: options,
-        correct: parseInt(q.correct_answer, 10) || 0,
-        type: q.question_type || 'multiple_choice',
-        points: q.points || 1
-      };
     });
 
-    // Ensure all required fields are present in the quiz object
-    const formattedQuiz = {
-      id: quiz.id,
-      title: quiz.title,
-      description: quiz.description || '',
-      time_limit: quiz.time_limit || 300, // Default to 5 minutes if not set
-      is_public: quiz.is_public || false,
-      teacher_id: quiz.teacher_id,
-      created_at: quiz.created_at,
-      questions: questions
+    return {
+      ...quiz,
+      questions,
     };
-
-    console.log('Formatted quiz data:', formattedQuiz);
-    return formattedQuiz;
   } catch (error) {
     console.error('Error fetching quiz with questions:', error);
     return null;
   }
 };
 
-// Store a quiz attempt
+// Store quiz attempt (including essay answers)
 export const storeQuizAttempt = async (
   quizId: string,
   userId: string,
   score: number,
-  totalQuestions: number,
-  timeSpent: number,
-  answers: number[]
+  totalPoints: number,
+  timeTaken: number,
+  answers: any[],
+  essayAnswers: any,
+  questionScores?: any
 ): Promise<boolean> => {
   try {
     const { error } = await supabase
@@ -333,10 +188,12 @@ export const storeQuizAttempt = async (
       .insert({
         quiz_id: quizId,
         student_id: userId,
-        score,
-        total_points: totalQuestions,
-        time_taken: timeSpent,
-        answers,
+        score: score,
+        total_points: totalPoints,
+        time_taken: timeTaken,
+        answers: answers,
+        essay_answers: essayAnswers,
+        question_scores: questionScores || {},
         completed_at: new Date().toISOString(),
       });
 
@@ -352,7 +209,7 @@ export const storeQuizAttempt = async (
   }
 };
 
-// Get user's quiz attempts (with quiz title and show_detailed_results flag)
+// Get user's quiz attempts with quiz details
 export const getUserQuizAttempts = async (userId: string) => {
   try {
     const { data, error } = await supabase
@@ -364,11 +221,7 @@ export const getUserQuizAttempts = async (userId: string) => {
       .eq('student_id', userId)
       .order('completed_at', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching user quiz attempts:', error);
-      return [];
-    }
-
+    if (error) throw error;
     return data || [];
   } catch (error) {
     console.error('Error fetching user quiz attempts:', error);
@@ -376,66 +229,7 @@ export const getUserQuizAttempts = async (userId: string) => {
   }
 };
 
-// Store default quiz topics in database (for system-wide quizzes)
-export const storeDefaultQuizTopics = async (): Promise<void> => {
-  try {
-    // We'll store these as system quizzes with a special system user ID
-    const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';
-    
-    // First check if default quizzes already exist
-    const { data: existingQuizzes } = await supabase
-      .from('quizzes')
-      .select('id')
-      .eq('teacher_id', SYSTEM_USER_ID);
-
-    if (existingQuizzes && existingQuizzes.length > 0) {
-      // Default quizzes already exist
-      return;
-    }
-
-    // Import quiz topics dynamically to avoid circular dependencies
-    const { quizTopics } = await import('@/data/quizQuestions');
-    
-    for (const topic of quizTopics) {
-      await createQuizInDB({
-        title: topic.title,
-        description: topic.description,
-        timeLimit: 15, // Default 15 minutes
-        questions: topic.questions,
-        isActive: true,
-      }, SYSTEM_USER_ID);
-    }
-  } catch (error) {
-    console.error('Error storing default quiz topics:', error);
-  }
-};
-
-// Get system default quizzes
-export const getDefaultQuizzes = async (): Promise<DatabaseQuiz[]> => {
-  try {
-    const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';
-    
-    const { data, error } = await supabase
-      .from('quizzes')
-      .select('*')
-      .eq('teacher_id', SYSTEM_USER_ID)
-      .order('title');
-
-    if (error) {
-      console.error('Error fetching default quizzes:', error);
-      return [];
-    }
-
-    return data || [];
-  } catch (error) {
-    
-    console.error('Error fetching default quizzes:', error);
-    return [];
-  }
-};
-
-// ========== FUNGSI UNTUK TEACHER DASHBOARD ==========
-// Get teacher's quizzes with attempts and student names
+// Get teacher's quizzes with attempts (PERBAIKAN: ambil semua field penting)
 export const getTeacherQuizzesWithAttempts = async (teacherId: string) => {
   try {
     const { data, error } = await supabase
@@ -450,33 +244,15 @@ export const getTeacherQuizzesWithAttempts = async (teacherId: string) => {
       .eq('teacher_id', teacherId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching teacher quizzes with attempts:', error);
-      return [];
-    }
-
-    // Format data untuk frontend
-    return data.map((quiz: any) => ({
-      ...quiz,
-      attempts: quiz.attempts.map((attempt: any) => ({
-        id: attempt.id,
-        studentName: attempt.student?.name || 'Unknown',
-        studentEmail: attempt.student?.email || '',
-        score: attempt.score || 0,
-        totalQuestions: attempt.total_points || 0,
-        completedAt: new Date(attempt.completed_at),
-        timeTaken: attempt.time_taken || 0,
-        answers: attempt.answers || [],
-      })),
-    }));
+    if (error) throw error;
+    return data || [];
   } catch (error) {
-    console.error('Error in getTeacherQuizzesWithAttempts:', error);
+    console.error('Error fetching teacher quizzes:', error);
     return [];
   }
 };
 
-// ========== FUNGSI BARU UNTUK DETAIL RESULTS ==========
-// Update quiz's show_detailed_results flag
+// Update quiz show_detailed_results flag
 export const updateQuizShowDetails = async (quizId: string, show: boolean): Promise<boolean> => {
   try {
     const { error } = await supabase
@@ -491,32 +267,9 @@ export const updateQuizShowDetails = async (quizId: string, show: boolean): Prom
   }
 };
 
-// Get a quiz with questions and also the show_detailed_results flag
-export const getQuizWithQuestionsAndDetailsFlag = async (quizId: string) => {
-  try {
-    const quiz = await getQuizWithQuestions(quizId);
-    if (!quiz) return null;
-    // Fetch the show_detailed_results flag separately
-    const { data, error } = await supabase
-      .from('quizzes')
-      .select('show_detailed_results')
-      .eq('id', quizId)
-      .single();
-    if (error) throw error;
-    return {
-      ...quiz,
-      show_detailed_results: data?.show_detailed_results || false,
-    };
-  } catch (error) {
-    console.error('Error fetching quiz with details flag:', error);
-    return null;
-  }
-};
-
-// Get a student's attempt with quiz details (including questions) for detailed view
+// Get student attempt with quiz details including questions
 export const getStudentAttemptWithQuizDetails = async (attemptId: string) => {
   try {
-    // Get attempt
     const { data: attempt, error: attemptError } = await supabase
       .from('quiz_attempts')
       .select('*')
@@ -524,11 +277,9 @@ export const getStudentAttemptWithQuizDetails = async (attemptId: string) => {
       .single();
     if (attemptError) throw attemptError;
 
-    // Get quiz with questions
     const quiz = await getQuizWithQuestions(attempt.quiz_id);
     if (!quiz) throw new Error('Quiz not found');
 
-    // Get show_detailed_results flag
     const { data: quizData, error: quizError } = await supabase
       .from('quizzes')
       .select('show_detailed_results')
@@ -542,7 +293,7 @@ export const getStudentAttemptWithQuizDetails = async (attemptId: string) => {
       show_detailed_results: quizData?.show_detailed_results || false,
     };
   } catch (error) {
-    console.error('Error fetching student attempt with quiz details:', error);
+    console.error('Error fetching student attempt:', error);
     return null;
   }
 };

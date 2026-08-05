@@ -4,8 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
 import { BookOpen, Share2, ExternalLink, History, Target, Eye, X } from 'lucide-react';
 import { getUserQuizAttempts, getStudentAttemptWithQuizDetails } from '../lib/quizStorage';
+import { supabase } from '../integrations/supabase/client';
 
-// Tipe data untuk tampilan (dengan tambahan flag show_detailed_results)
 interface StudentQuizAttempt {
   id: string;
   quizId: string;
@@ -15,7 +15,7 @@ interface StudentQuizAttempt {
   completedAt: Date;
   timeSpent: number;
   percentage: number;
-  showDetailedResults: boolean; // dari quiz
+  showDetailedResults: boolean;
 }
 
 const StudentDashboard = () => {
@@ -25,12 +25,12 @@ const StudentDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
 
-  // State untuk modal detail
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedAttemptDetail, setSelectedAttemptDetail] = useState<any>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
-  // Ambil data dari Supabase saat user berubah atau tab aktif
+  const [quizEssayMap, setQuizEssayMap] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
     if (!user) return;
 
@@ -38,7 +38,6 @@ const StudentDashboard = () => {
       setLoading(true);
       try {
         const rawAttempts = await getUserQuizAttempts(user.id);
-        // Map data dari database ke format StudentQuizAttempt
         const formatted: StudentQuizAttempt[] = rawAttempts.map((item: any) => ({
           id: item.id,
           quizId: item.quiz_id,
@@ -51,6 +50,23 @@ const StudentDashboard = () => {
           showDetailedResults: item.quiz?.show_detailed_results || false,
         }));
         setQuizAttempts(formatted);
+
+        const quizIds = [...new Set(formatted.map(a => a.quizId))];
+        if (quizIds.length > 0) {
+          const { data: questionsData, error } = await supabase
+            .from('questions')
+            .select('quiz_id, question_type')
+            .in('quiz_id', quizIds);
+
+          if (!error) {
+            const map: Record<string, boolean> = {};
+            quizIds.forEach(id => {
+              const hasEssay = questionsData?.some(q => q.quiz_id === id && q.question_type === 'essay') || false;
+              map[id] = hasEssay;
+            });
+            setQuizEssayMap(map);
+          }
+        }
       } catch (error) {
         console.error('Error fetching quiz attempts:', error);
         setQuizAttempts([]);
@@ -62,12 +78,10 @@ const StudentDashboard = () => {
     fetchAttempts();
   }, [user, activeTab]);
 
-  // Validasi role: hanya student yang boleh akses
   if (!user || user.role !== 'student') {
     return <Navigate to="/auth" replace />;
   }
 
-  // Fungsi join quiz
   const joinQuiz = () => {
     if (quizLink.trim()) {
       const usedLinks = JSON.parse(localStorage.getItem(`used_links_${user.id}`) || '[]');
@@ -95,11 +109,11 @@ const StudentDashboard = () => {
           const targetUrl = `${window.location.origin}/quiz/shared/${quizId}`;
           window.location.href = targetUrl;
         } else {
-          alert('Invalid quiz link format. Please check the link and try again.');
+          alert('Invalid quiz link format.');
         }
       } catch (error) {
         console.error('Error parsing quiz link:', error);
-        alert('Invalid quiz link. Please check the format and try again.');
+        alert('Invalid quiz link.');
       }
     }
   };
@@ -107,18 +121,13 @@ const StudentDashboard = () => {
   const shareResult = (attempt: StudentQuizAttempt) => {
     const shareText = `I scored ${attempt.score}/${attempt.totalQuestions} (${attempt.percentage.toFixed(1)}%) on "${attempt.quizTitle}" quiz!`;
     if (navigator.share) {
-      navigator.share({
-        title: 'Quiz Result',
-        text: shareText,
-        url: window.location.origin,
-      });
+      navigator.share({ title: 'Quiz Result', text: shareText, url: window.location.origin });
     } else {
       navigator.clipboard.writeText(shareText);
       alert('Result copied to clipboard!');
     }
   };
 
-  // Fungsi untuk membuka modal detail
   const openDetail = async (attemptId: string) => {
     setLoadingDetail(true);
     try {
@@ -140,7 +149,6 @@ const StudentDashboard = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       <div className="flex">
-        {/* Sidebar */}
         <div className="w-64 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm shadow-xl h-screen sticky top-0">
           <div className="p-6">
             <div className="flex items-center space-x-3 mb-8">
@@ -178,15 +186,12 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* Main Content */}
         <div className="flex-1 p-8">
           {activeTab === 'overview' && (
             <div>
               <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-8">
                 Dashboard Overview
               </h2>
-
-              {/* Recent Quiz Attempts */}
               <div className="sidebar-card p-6">
                 <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
                   Recent Quiz Attempts
@@ -198,41 +203,21 @@ const StudentDashboard = () => {
                 ) : quizAttempts.length > 0 ? (
                   <div className="space-y-4">
                     {quizAttempts.slice(0, 5).map((attempt) => (
-                      <div
-                        key={attempt.id}
-                        className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg"
-                      >
+                      <div key={attempt.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
                         <div>
-                          <h4 className="font-medium text-gray-900 dark:text-white">
-                            {attempt.quizTitle}
-                          </h4>
+                          <h4 className="font-medium text-gray-900 dark:text-white">{attempt.quizTitle}</h4>
                           <p className="text-sm text-gray-600 dark:text-gray-300">
-                            {new Date(attempt.completedAt).toLocaleDateString()} •{' '}
-                            {Math.round(attempt.timeSpent / 60)} minutes
+                            {new Date(attempt.completedAt).toLocaleDateString()} • {Math.round(attempt.timeSpent / 60)} minutes
                           </p>
                         </div>
                         <div className="flex items-center space-x-3">
                           <div className="text-right">
-                            <p className="font-semibold text-gray-900 dark:text-white">
-                              {attempt.score}/{attempt.totalQuestions}
-                            </p>
-                            <p
-                              className={`text-sm font-medium ${
-                                attempt.percentage >= 80
-                                  ? 'text-green-600'
-                                  : attempt.percentage >= 60
-                                  ? 'text-yellow-600'
-                                  : 'text-red-600'
-                              }`}
-                            >
+                            <p className="font-semibold text-gray-900 dark:text-white">{attempt.score}/{attempt.totalQuestions}</p>
+                            <p className={`text-sm font-medium ${attempt.percentage >= 80 ? 'text-green-600' : attempt.percentage >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
                               {attempt.percentage.toFixed(1)}%
                             </p>
                           </div>
-                          <button
-                            onClick={() => shareResult(attempt)}
-                            className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
-                            title="Share result"
-                          >
+                          <button onClick={() => shareResult(attempt)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors">
                             <Share2 size={16} />
                           </button>
                         </div>
@@ -242,9 +227,7 @@ const StudentDashboard = () => {
                 ) : (
                   <div className="text-center py-8">
                     <BookOpen className="mx-auto text-gray-400 mb-4" size={48} />
-                    <p className="text-gray-600 dark:text-gray-300">
-                      No quiz attempts yet. Join your first quiz!
-                    </p>
+                    <p className="text-gray-600 dark:text-gray-300">No quiz attempts yet. Join your first quiz!</p>
                   </div>
                 )}
               </div>
@@ -253,28 +236,18 @@ const StudentDashboard = () => {
 
           {activeTab === 'join' && (
             <div className="max-w-2xl mx-auto">
-              <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-8">
-                Join Quiz
-              </h2>
-
+              <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-8">Join Quiz</h2>
               <div className="sidebar-card p-8">
                 <div className="text-center mb-8">
                   <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
                     <ExternalLink className="text-white" size={32} />
                   </div>
-                  <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                    Enter Quiz Link
-                  </h3>
-                  <p className="text-gray-600 dark:text-gray-300">
-                    Paste the quiz link provided by your teacher
-                  </p>
+                  <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">Enter Quiz Link</h3>
+                  <p className="text-gray-600 dark:text-gray-300">Paste the quiz link provided by your teacher</p>
                 </div>
-
                 <div className="space-y-6">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Quiz Link
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Quiz Link</label>
                     <input
                       type="url"
                       value={quizLink}
@@ -283,7 +256,6 @@ const StudentDashboard = () => {
                       placeholder="https://yourapp.com/quiz/shared/123 or just the quiz ID"
                     />
                   </div>
-
                   <button
                     onClick={joinQuiz}
                     disabled={!quizLink.trim()}
@@ -292,11 +264,8 @@ const StudentDashboard = () => {
                     Join Quiz
                   </button>
                 </div>
-
                 <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
-                  <h4 className="font-medium text-blue-900 dark:text-blue-200 mb-2">
-                    Important Notes:
-                  </h4>
+                  <h4 className="font-medium text-blue-900 dark:text-blue-200 mb-2">Important Notes:</h4>
                   <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
                     <li>• Each quiz link can only be used once per student</li>
                     <li>• You can paste the full URL or just the quiz ID</li>
@@ -311,10 +280,7 @@ const StudentDashboard = () => {
 
           {activeTab === 'history' && (
             <div>
-              <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-8">
-                Quiz History
-              </h2>
-
+              <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-8">Quiz History</h2>
               {loading ? (
                 <div className="flex justify-center py-8">
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
@@ -324,32 +290,19 @@ const StudentDashboard = () => {
                   {quizAttempts.map((attempt) => (
                     <div key={attempt.id} className="sidebar-card p-6">
                       <div className="flex items-start justify-between mb-4">
-                        <div>
-                          <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-                            {attempt.quizTitle}
-                          </h3>
-                          <p className="text-gray-600 dark:text-gray-300 mt-1">
-                            Completed on{' '}
-                            {new Date(attempt.completedAt).toLocaleDateString()} at{' '}
-                            {new Date(attempt.completedAt).toLocaleTimeString()}
-                          </p>
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-xl font-semibold text-gray-900 dark:text-white">{attempt.quizTitle}</h3>
+                          {quizEssayMap[attempt.quizId] && (
+                            <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded-full text-xs font-medium">Includes Essay</span>
+                          )}
                         </div>
-
                         <div className="flex space-x-2">
-                          <button
-                            onClick={() => shareResult(attempt)}
-                            className="flex items-center space-x-2 px-4 py-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
-                          >
+                          <button onClick={() => shareResult(attempt)} className="flex items-center space-x-2 px-4 py-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors">
                             <Share2 size={16} />
                             <span>Share</span>
                           </button>
-
-                          {/* Tombol View Details hanya jika showDetailedResults true */}
                           {attempt.showDetailedResults && (
-                            <button
-                              onClick={() => openDetail(attempt.id)}
-                              className="flex items-center space-x-2 px-4 py-2 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors"
-                            >
+                            <button onClick={() => openDetail(attempt.id)} className="flex items-center space-x-2 px-4 py-2 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors">
                               <Eye size={16} />
                               <span>View Details</span>
                             </button>
@@ -359,59 +312,28 @@ const StudentDashboard = () => {
 
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div className="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                            {attempt.score}
-                          </p>
-                          <p className="text-sm text-gray-600 dark:text-gray-300">
-                            Correct Answers
-                          </p>
+                          <p className="text-2xl font-bold text-gray-900 dark:text-white">{attempt.score}</p>
+                          <p className="text-sm text-gray-600 dark:text-gray-300">Correct Answers</p>
                         </div>
                         <div className="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                            {attempt.totalQuestions}
-                          </p>
-                          <p className="text-sm text-gray-600 dark:text-gray-300">
-                            Total Questions
-                          </p>
+                          <p className="text-2xl font-bold text-gray-900 dark:text-white">{attempt.totalQuestions}</p>
+                          <p className="text-sm text-gray-600 dark:text-gray-300">Total Questions</p>
                         </div>
                         <div className="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                          <p
-                            className={`text-2xl font-bold ${
-                              attempt.percentage >= 80
-                                ? 'text-green-600'
-                                : attempt.percentage >= 60
-                                ? 'text-yellow-600'
-                                : 'text-red-600'
-                            }`}
-                          >
+                          <p className={`text-2xl font-bold ${attempt.percentage >= 80 ? 'text-green-600' : attempt.percentage >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
                             {attempt.percentage.toFixed(1)}%
                           </p>
-                          <p className="text-sm text-gray-600 dark:text-gray-300">
-                            Percentage
-                          </p>
+                          <p className="text-sm text-gray-600 dark:text-gray-300">Percentage</p>
                         </div>
                         <div className="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                            {Math.round(attempt.timeSpent / 60)}
-                          </p>
-                          <p className="text-sm text-gray-600 dark:text-gray-300">
-                            Minutes
-                          </p>
+                          <p className="text-2xl font-bold text-gray-900 dark:text-white">{Math.round(attempt.timeSpent / 60)}</p>
+                          <p className="text-sm text-gray-600 dark:text-gray-300">Minutes</p>
                         </div>
                       </div>
 
                       <div className="mt-4">
                         <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div
-                            className={`h-2 rounded-full ${
-                              attempt.percentage >= 80
-                                ? 'bg-green-500'
-                                : attempt.percentage >= 60
-                                ? 'bg-yellow-500'
-                                : 'bg-red-500'
-                            }`}
-                            style={{ width: `${attempt.percentage}%` }}
-                          ></div>
+                          <div className={`h-2 rounded-full ${attempt.percentage >= 80 ? 'bg-green-500' : attempt.percentage >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${attempt.percentage}%` }}></div>
                         </div>
                       </div>
                     </div>
@@ -420,16 +342,9 @@ const StudentDashboard = () => {
               ) : (
                 <div className="sidebar-card p-12 text-center">
                   <History className="mx-auto text-gray-400 mb-4" size={64} />
-                  <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                    No Quiz History
-                  </h3>
-                  <p className="text-gray-600 dark:text-gray-300 mb-6">
-                    You haven't taken any quizzes yet. Join your first quiz to get started!
-                  </p>
-                  <button
-                    onClick={() => setActiveTab('join')}
-                    className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-1"
-                  >
+                  <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">No Quiz History</h3>
+                  <p className="text-gray-600 dark:text-gray-300 mb-6">You haven't taken any quizzes yet. Join your first quiz to get started!</p>
+                  <button onClick={() => setActiveTab('join')} className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-1">
                     Join a Quiz
                   </button>
                 </div>
@@ -443,10 +358,7 @@ const StudentDashboard = () => {
       {showDetailModal && selectedAttemptDetail && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 relative">
-            <button
-              onClick={() => setShowDetailModal(false)}
-              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            >
+            <button onClick={() => setShowDetailModal(false)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
               <X size={24} />
             </button>
             <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
@@ -459,13 +371,32 @@ const StudentDashboard = () => {
             {selectedAttemptDetail.show_detailed_results ? (
               <div className="space-y-6">
                 {selectedAttemptDetail.quiz.questions.map((q: any, idx: number) => {
+                  // Tampilkan essay
+                  if (q.question_type === 'essay') {
+                    const essayAnswer = selectedAttemptDetail.attempt.essay_answers?.[idx] || '';
+                    const score = selectedAttemptDetail.attempt.question_scores?.[idx] || 0;
+                    return (
+                      <div key={idx} className="border dark:border-gray-700 rounded-lg p-4">
+                        <p className="font-medium text-gray-900 dark:text-white">{idx+1}. {q.question_text}</p>
+                        {q.image_url && (
+                          <img src={q.image_url} alt="Question" className="max-w-xs h-24 object-cover rounded-lg mt-2" />
+                        )}
+                        <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-700 rounded">
+                          <p className="text-sm text-gray-600 dark:text-gray-300">Your Essay Answer:</p>
+                          <p className="mt-1 whitespace-pre-wrap">{essayAnswer || 'No answer provided'}</p>
+                        </div>
+                        <p className="text-sm mt-2">
+                          Score: {score} / {q.points || 10}
+                        </p>
+                      </div>
+                    );
+                  }
+                  // Multiple choice (jika masih ada)
                   const studentAnswer = selectedAttemptDetail.attempt.answers[idx];
                   const isCorrect = studentAnswer === q.correct;
                   return (
                     <div key={idx} className="border dark:border-gray-700 rounded-lg p-4">
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {idx + 1}. {q.question}
-                      </p>
+                      <p className="font-medium text-gray-900 dark:text-white">{idx+1}. {q.question_text}</p>
                       <div className="mt-2 space-y-1">
                         {q.options.map((opt: string, optIdx: number) => {
                           let className = 'px-3 py-1 rounded text-sm ';
@@ -479,7 +410,7 @@ const StudentDashboard = () => {
                           );
                         })}
                       </div>
-                      <p className="text-sm mt-2 text-gray-700 dark:text-gray-300">
+                      <p className="text-sm mt-2">
                         Your answer: {studentAnswer !== undefined ? q.options[studentAnswer] || 'Not answered' : 'Not answered'}
                         {isCorrect ? ' ✅' : ' ❌'}
                       </p>

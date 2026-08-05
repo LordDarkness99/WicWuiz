@@ -95,6 +95,7 @@ export type Database = {
         Row: {
           correct_answer: string
           created_at: string
+          essay_question: boolean | null
           id: string
           image_url: string | null
           options: Json | null
@@ -107,6 +108,7 @@ export type Database = {
         Insert: {
           correct_answer: string
           created_at?: string
+          essay_question?: boolean | null
           id?: string
           image_url?: string | null
           options?: Json | null
@@ -119,6 +121,7 @@ export type Database = {
         Update: {
           correct_answer?: string
           created_at?: string
+          essay_question?: boolean | null
           id?: string
           image_url?: string | null
           options?: Json | null
@@ -142,7 +145,9 @@ export type Database = {
         Row: {
           answers: Json
           completed_at: string | null
+          essay_answers: Json | null
           id: string
+          question_scores: Json | null
           quiz_id: string
           score: number | null
           started_at: string
@@ -153,7 +158,9 @@ export type Database = {
         Insert: {
           answers: Json
           completed_at?: string | null
+          essay_answers?: Json | null
           id?: string
+          question_scores?: Json | null
           quiz_id: string
           score?: number | null
           started_at?: string
@@ -164,7 +171,9 @@ export type Database = {
         Update: {
           answers?: Json
           completed_at?: string | null
+          essay_answers?: Json | null
           id?: string
+          question_scores?: Json | null
           quiz_id?: string
           score?: number | null
           started_at?: string
