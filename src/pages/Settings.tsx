@@ -68,11 +68,11 @@ const Settings = () => {
   const showNotification = (message: string) => {
     if (pushNotifications && 'Notification' in window) {
       if (Notification.permission === 'granted') {
-        new Notification('Quiz App', { body: message });
+        new Notification('WicQuiz', { body: message });
       } else if (Notification.permission !== 'denied') {
         Notification.requestPermission().then(permission => {
           if (permission === 'granted') {
-            new Notification('Quiz App', { body: message });
+            new Notification('WicQuiz', { body: message });
           }
         });
       }
@@ -110,7 +110,7 @@ const Settings = () => {
             {section.title === 'About' ? (
               <div className="space-y-4">
                 <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-                  <h4 className="font-semibold text-purple-900 dark:text-purple-200 mb-2">About Quiz App</h4>
+                  <h4 className="font-semibold text-purple-900 dark:text-purple-200 mb-2">About WicQuiz</h4>
                   <p className="text-purple-700 dark:text-purple-300 text-sm">
                     A modern quiz platform designed to make learning fun and interactive. 
                     Create, share, and take quizzes with ease.

@@ -24,7 +24,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onToggleMode }) => {
       
       // Show notification for error
       if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Quiz App', { body: 'Sign in failed. Please check your credentials.' });
+        new Notification('WicQuiz', { body: 'Sign in failed. Please check your credentials.' });
       }
     }
     setLoading(false);

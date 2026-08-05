@@ -53,7 +53,7 @@ const Navigation = () => {
             <div className="w-12 h-12 quiz-gradient rounded-2xl flex items-center justify-center shadow-xl group-hover:shadow-2xl transition-all duration-300 transform group-hover:scale-110">
               <span className="text-white font-bold text-lg">Q</span>
             </div>
-            <span className="font-bold text-2xl gradient-text">QuizApp</span>
+            <span className="font-bold text-2xl gradient-text">WicQuiz</span>
           </Link>
 
           <div className="hidden md:flex items-center space-x-8">

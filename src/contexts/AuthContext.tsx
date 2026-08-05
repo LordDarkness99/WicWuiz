@@ -5,7 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
   if ('Notification' in window) {
     if (Notification.permission === 'granted') {
-      new Notification('Quiz App', { 
+      new Notification('WicQuiz', { 
         body: message,
         icon: '/favicon.ico',
         badge: '/favicon.ico'
@@ -13,7 +13,7 @@ const showNotification = (message: string, type: 'success' | 'error' | 'info' = 
     } else if (Notification.permission !== 'denied') {
       Notification.requestPermission().then(permission => {
         if (permission === 'granted') {
-          new Notification('Quiz App', { 
+          new Notification('WicQuiz', { 
             body: message,
             icon: '/favicon.ico',
             badge: '/favicon.ico'

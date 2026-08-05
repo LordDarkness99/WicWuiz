@@ -26,12 +26,12 @@ const SignupForm: React.FC<SignupFormProps> = ({ onToggleMode }) => {
       
       // Show notification for error
       if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Quiz App', { body: 'Account creation failed. Please try again.' });
+        new Notification('Wicaksana Quiz', { body: 'Account creation failed. Please try again.' });
       }
     } else {
       // Show success notification
       if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Quiz App', { body: 'Account created! Please check your email to confirm.' });
+        new Notification('Wicaksana Quiz', { body: 'Account created! Please check your email to confirm.' });
       }
     }
     setLoading(false);

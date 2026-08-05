@@ -105,13 +105,13 @@ const Index = () => {
                 <span className="text-white font-bold text-2xl">Q</span>
               </div>
               <div>
-                <h3 className="text-3xl font-bold gradient-text">Quiz App</h3>
+                <h3 className="text-3xl font-bold gradient-text">WizQuiz</h3>
                 <p className="text-gray-300 text-lg">Learn. Challenge. Grow.</p>
               </div>
             </div>
             <div className="text-center md:text-right">
               <p className="text-gray-300 text-lg">
-                © 2025 Quiz App. All rights reserved.
+                © 2025 WizQuiz. All rights reserved.
               </p>
               <p className="text-gray-400 mt-2">
                 Created with ❤️ by <span className="font-semibold text-purple-300">Krish Yadav</span>
